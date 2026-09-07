@@ -1,17 +1,45 @@
 import { Component, OnInit, AfterViewInit, OnDestroy, ViewChild, ElementRef, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { Chart, registerables } from 'chart.js';
 import { Loading } from '../../components/loading/loading';
 import { GlobalService } from '../../services/global.service';
 import { api } from '../../services/api';
 
+export interface GroupIndicatorDetail {
+  code: string;
+  name: string;
+  category: string;
+  categoryName: string;
+  costCenterCount: number;
+  totalValue: number;
+  percentageOfRevenue: number;
+}
+
+export interface FinancialIndicators {
+  grossRevenue: number;
+  coe: number;
+  cot: number;
+  margemBruta: number;
+  margemBrutaPercent: number;
+  ebitdaAgricola: number;
+  ebitdaPercent: number;
+  capex: number;
+  fcol: number;
+  compromissosDividas: number;
+  saidasNaoOperacionais: number;
+  investimentosNaoOperacionais: number;
+  deltaCaixaFinal: number;
+  groups: GroupIndicatorDetail[];
+}
+
 Chart.register(...registerables);
 
 @Component({
   selector: 'app-dashboard',
   standalone: true,
-  imports: [CommonModule, RouterLink, Loading],
+  imports: [CommonModule, FormsModule, RouterLink, Loading],
   templateUrl: './dashboard.html',
   styleUrl: './dashboard.css'
 })
@@ -20,6 +48,10 @@ export class Dashboard implements OnInit, AfterViewInit, OnDestroy {
 
   donutChart: Chart | null = null;
   isLoading = true;
+  indicatorsLoading = false;
+
+  grossRevenue: number = 0;
+  indicators: FinancialIndicators | null = null;
 
   stats = {
     totalGroups: 0,
@@ -37,7 +69,13 @@ export class Dashboard implements OnInit, AfterViewInit, OnDestroy {
   ) {}
 
   ngOnInit() {
+    const savedRevenue = localStorage.getItem('gross_revenue');
+    if (savedRevenue !== null) {
+      const parsed = parseFloat(savedRevenue);
+      this.grossRevenue = isNaN(parsed) ? 0 : parsed;
+    }
     this.fetchData();
+    this.fetchFinancialIndicators();
   }
 
   ngAfterViewInit() {
@@ -53,6 +91,37 @@ export class Dashboard implements OnInit, AfterViewInit, OnDestroy {
       this.donutChart.destroy();
       this.donutChart = null;
     }
+  }
+
+  async fetchFinancialIndicators() {
+    this.indicatorsLoading = true;
+    this.cdr.detectChanges();
+    try {
+      const res = await api.get('/api/financial-indicators', {
+        params: { grossRevenue: this.grossRevenue || 0 }
+      });
+      if (res.data?.result) {
+        this.indicators = res.data.result;
+      }
+    } catch (e) {
+      console.warn('Erro ao carregar indicadores:', e);
+    } finally {
+      this.indicatorsLoading = false;
+      this.cdr.detectChanges();
+    }
+  }
+
+  private revenueDebounceTimer: any = null;
+  onGrossRevenueChange(val: any) {
+    const num = parseFloat(val);
+    this.grossRevenue = isNaN(num) ? 0 : num;
+    localStorage.setItem('gross_revenue', this.grossRevenue.toString());
+    if (this.revenueDebounceTimer) {
+      clearTimeout(this.revenueDebounceTimer);
+    }
+    this.revenueDebounceTimer = setTimeout(() => {
+      this.fetchFinancialIndicators();
+    }, 400);
   }
 
   async fetchData() {

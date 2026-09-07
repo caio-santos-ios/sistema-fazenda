@@ -4,6 +4,7 @@ using api_bora_trampar.src.Models.Base;
 using api_bora_trampar.src.Requests;
 using api_bora_trampar.src.Requests._Base;
 using api_bora_trampar.src.Requests.Base;
+using api_bora_trampar.src.Responses.Dashboard;
 
 namespace api_bora_trampar.src.Interfaces
 {
@@ -22,5 +23,6 @@ namespace api_bora_trampar.src.Interfaces
         Task<ResponseApi<object?>> GetImportHistoriesAsync(int page = 1, int pageSize = 50);
         Task<ResponseApi<ImportHistory?>> GetImportHistoryByIdAsync(string id);
         Task<ResponseApi<object?>> DeleteImportHistoryAsync(string id, string userId);
+        Task<ResponseApi<FinancialIndicatorsResponse>> GetFinancialIndicatorsAsync(decimal grossRevenue);
     }
 }

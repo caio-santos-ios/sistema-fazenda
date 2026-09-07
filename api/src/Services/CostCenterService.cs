@@ -6,6 +6,7 @@ using api_bora_trampar.src.Models.Base;
 using api_bora_trampar.src.Requests;
 using api_bora_trampar.src.Requests._Base;
 using api_bora_trampar.src.Requests.Base;
+using api_bora_trampar.src.Responses.Dashboard;
 using api_bora_trampar.src.Utils;
 using ClosedXML.Excel;
 using MongoDB.Bson;
@@ -468,7 +469,7 @@ namespace api_bora_trampar.src.Services
 
                 var detailedLines = new List<object>();
 
-                var accumulatedCcMap = new Dictionary<string, (CostCenter cc, decimal accumulatedValue, List<string> sourceDescriptions, bool hasAmbiguity, List<object> alternativeCandidates)>();
+                var accumulatedCcMap = new Dictionary<string, (CostCenter cc, decimal accumulatedValue, List<string> sourceDescriptions, List<object> sourceLines, bool hasAmbiguity, List<object> alternativeCandidates)>();
                 var unmatchedRows = new List<object>();
 
                 foreach (var row in rowsList)
@@ -562,7 +563,15 @@ namespace api_bora_trampar.src.Services
 
                     if (bestMatch != null && bestSimilarity >= 0.45)
                     {
+                        string lineId = Guid.NewGuid().ToString("N");
                         string srcDesc = $"{rawDesc} (R$ {val:N2})";
+                        var srcLineObj = new
+                        {
+                            id = lineId,
+                            description = rawDesc,
+                            value = val,
+                            formattedText = srcDesc
+                        };
 
                         groupByCode.TryGetValue(bestMatch.GroupCode, out var g);
                         subGroupByCode.TryGetValue(bestMatch.SubGroupCode, out var sg);
@@ -572,6 +581,7 @@ namespace api_bora_trampar.src.Services
 
                         detailedLines.Add(new
                         {
+                            id = lineId,
                             costCenterId = bestMatch.Id,
                             costCenterCode = bestMatch.Code,
                             costCenterName = bestMatch.Name,
@@ -582,15 +592,16 @@ namespace api_bora_trampar.src.Services
 
                         if (!accumulatedCcMap.ContainsKey(bestMatch.Id))
                         {
-                            accumulatedCcMap[bestMatch.Id] = (bestMatch, val, new List<string> { srcDesc }, hasAmbiguity, alternativeCandidates);
+                            accumulatedCcMap[bestMatch.Id] = (bestMatch, val, new List<string> { srcDesc }, new List<object> { srcLineObj }, hasAmbiguity, alternativeCandidates);
                         }
                         else
                         {
                             var existing = accumulatedCcMap[bestMatch.Id];
                             existing.sourceDescriptions.Add(srcDesc);
+                            existing.sourceLines.Add(srcLineObj);
                             bool combinedAmbiguity = existing.hasAmbiguity || hasAmbiguity;
                             var combinedAlts = existing.alternativeCandidates.Count > 0 ? existing.alternativeCandidates : alternativeCandidates;
-                            accumulatedCcMap[bestMatch.Id] = (bestMatch, existing.accumulatedValue + val, existing.sourceDescriptions, combinedAmbiguity, combinedAlts);
+                            accumulatedCcMap[bestMatch.Id] = (bestMatch, existing.accumulatedValue + val, existing.sourceDescriptions, existing.sourceLines, combinedAmbiguity, combinedAlts);
                         }
                     }
                     else
@@ -599,6 +610,8 @@ namespace api_bora_trampar.src.Services
                         {
                             description = rawDesc,
                             value = val,
+                            bestMatchId = bestMatch?.Id,
+                            bestMatchCode = bestMatch?.Code,
                             bestMatchName = bestMatch?.Name,
                             similarity = Math.Round(bestSimilarity, 2)
                         });
@@ -651,6 +664,7 @@ namespace api_bora_trampar.src.Services
                                             subGroupCode = item.cc.SubGroupCode,
                                             subCostCenter = item.cc.SubCostCenter,
                                             sourceDescriptions = item.sourceDescriptions,
+                                            sourceLines = item.sourceLines,
                                             hasAmbiguity = item.hasAmbiguity,
                                             alternativeCandidates = item.alternativeCandidates,
                                             hasChildren = false,
@@ -687,6 +701,7 @@ namespace api_bora_trampar.src.Services
                                     subGroupCode = item.cc.SubGroupCode,
                                     subCostCenter = "",
                                     sourceDescriptions = item.sourceDescriptions,
+                                    sourceLines = item.sourceLines,
                                     hasAmbiguity = item.hasAmbiguity,
                                     alternativeCandidates = item.alternativeCandidates,
                                     hasChildren = false,
@@ -748,6 +763,7 @@ namespace api_bora_trampar.src.Services
                         name = m.cc.Name,
                         value = m.accumulatedValue,
                         sourceDescriptions = m.sourceDescriptions,
+                        sourceLines = m.sourceLines,
                         hasAmbiguity = m.hasAmbiguity,
                         alternativeCandidates = m.alternativeCandidates
                     }),
@@ -1091,6 +1107,149 @@ namespace api_bora_trampar.src.Services
                 result = -result;
             }
             return parsed;
+        }
+
+        public async Task<ResponseApi<FinancialIndicatorsResponse>> GetFinancialIndicatorsAsync(decimal grossRevenue)
+        {
+            try
+            {
+                var groups = await groupRepository.GetActiveGroupsAsync();
+                var costCenters = await repository.GetActiveCostCentersAsync();
+
+                var ccByGroup = costCenters
+                    .GroupBy(x => x.GroupCode)
+                    .ToDictionary(g => g.Key, g => g.Sum(x => x.Value));
+
+                var ccCountByGroup = costCenters
+                    .GroupBy(x => x.GroupCode)
+                    .ToDictionary(g => g.Key, g => g.Count());
+
+                decimal coe = 0;
+                decimal indirect = 0;
+                decimal capex = 0;
+                decimal debts = 0;
+                decimal nonOpOutflows = 0;
+                decimal nonOpInvestments = 0;
+
+                var groupDetails = new List<GroupIndicatorDetail>();
+
+                foreach (var grp in groups.OrderBy(g => g.Code))
+                {
+                    decimal directVal = grp.Value;
+                    decimal ccVal = ccByGroup.TryGetValue(grp.Code, out var cv) ? cv : 0;
+                    decimal totalVal = directVal + ccVal;
+                    int ccCount = ccCountByGroup.TryGetValue(grp.Code, out var cnt) ? cnt : 0;
+
+                    string category = ClassifyGroupCategory(grp.Code, grp.Name);
+                    string categoryName = GetCategoryDisplayName(category);
+
+                    switch (category)
+                    {
+                        case "COE":
+                            coe += totalVal;
+                            break;
+                        case "COT_INDIRECT":
+                            indirect += totalVal;
+                            break;
+                        case "CAPEX":
+                            capex += totalVal;
+                            break;
+                        case "DEBTS":
+                            debts += totalVal;
+                            break;
+                        case "NON_OP_OUTFLOW":
+                            nonOpOutflows += totalVal;
+                            break;
+                        case "NON_OP_INVEST":
+                            nonOpInvestments += totalVal;
+                            break;
+                        default:
+                            indirect += totalVal;
+                            break;
+                    }
+
+                    double pct = grossRevenue > 0 ? (double)(totalVal / grossRevenue * 100) : 0;
+                    groupDetails.Add(new GroupIndicatorDetail
+                    {
+                        Code = grp.Code,
+                        Name = grp.Name,
+                        Category = category,
+                        CategoryName = categoryName,
+                        CostCenterCount = ccCount,
+                        TotalValue = totalVal,
+                        PercentageOfRevenue = Math.Round(pct, 2)
+                    });
+                }
+
+                decimal cot = coe + indirect;
+                decimal margemBruta = grossRevenue - coe;
+                double margemBrutaPct = grossRevenue > 0 ? (double)(margemBruta / grossRevenue * 100) : 0;
+
+                decimal ebitda = grossRevenue - cot;
+                double ebitdaPct = grossRevenue > 0 ? (double)(ebitda / grossRevenue * 100) : 0;
+
+                decimal fcol = ebitda - capex;
+                decimal deltaCaixaFinal = fcol - debts - nonOpOutflows - nonOpInvestments;
+
+                var result = new FinancialIndicatorsResponse
+                {
+                    GrossRevenue = grossRevenue,
+                    COE = coe,
+                    COT = cot,
+                    MargemBruta = margemBruta,
+                    MargemBrutaPercent = Math.Round(margemBrutaPct, 2),
+                    EbitdaAgricola = ebitda,
+                    EbitdaPercent = Math.Round(ebitdaPct, 2),
+                    CAPEX = capex,
+                    FCOL = fcol,
+                    CompromissosDividas = debts,
+                    SaidasNaoOperacionais = nonOpOutflows,
+                    InvestimentosNaoOperacionais = nonOpInvestments,
+                    DeltaCaixaFinal = deltaCaixaFinal,
+                    Groups = groupDetails
+                };
+
+                return new(result, 200, "Indicadores econômicos e financeiros calculados com sucesso.");
+            }
+            catch (Exception ex)
+            {
+                return new(null, 500, $"Erro ao calcular indicadores: {ex.Message}");
+            }
+        }
+
+        private static string ClassifyGroupCategory(string code, string name)
+        {
+            string norm = (name ?? "").ToLower().Trim();
+
+            if (code == "1") return "COE";
+            if (code == "2" && !norm.Contains("direto")) return "COT_INDIRECT";
+            if (code == "3" && !norm.Contains("indireto")) return "CAPEX";
+            if (code == "4" && !norm.Contains("indireto")) return "DEBTS";
+            if (code == "5" && !norm.Contains("capex") && !norm.Contains("invest")) return "NON_OP_OUTFLOW";
+            if (code == "6" && !norm.Contains("dívida") && !norm.Contains("divida")) return "NON_OP_INVEST";
+
+            if (norm.Contains("indireto")) return "COT_INDIRECT";
+            if (norm.Contains("coe") || norm.Contains("direto")) return "COE";
+            if ((norm.Contains("não operacional") || norm.Contains("nao operacional")) && (norm.Contains("investimento") || norm.Contains("invest"))) return "NON_OP_INVEST";
+            if (norm.Contains("saída") || norm.Contains("saida") || norm.Contains("não operacional") || norm.Contains("nao operacional")) return "NON_OP_OUTFLOW";
+            if (norm.Contains("compromisso") || norm.Contains("dívida") || norm.Contains("divida")) return "DEBTS";
+            if (norm.Contains("capex") || norm.Contains("investimento")) return "CAPEX";
+
+            return "OTHER";
+        }
+
+        private static string GetCategoryDisplayName(string category)
+        {
+            return category switch
+            {
+                "COE" => "Macro Grupo 1 - Custo Operacional Direto (COE)",
+                "COT_INDIRECT" => "Macro Grupo 2 - Custo Operacional Indireto",
+                "CAPEX" => "Macro Grupo 3 - Investimentos (CAPEX)",
+                "DEBTS" => "Macro Grupo 4 - Compromissos e Dívidas",
+                "NON_OP_OUTFLOW" => "Macro Grupo 5 - Saídas Não Operacionais",
+                "NON_OP_INVEST" => "Macro Grupo 6 - Investimentos Não Operacionais",
+                _ => "Outros"
+            };
         }
         #endregion
     }

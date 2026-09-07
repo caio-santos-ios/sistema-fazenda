@@ -132,5 +132,13 @@ namespace api_bora_trampar.src.Controllers
             var response = await service.DeleteImportHistoryAsync(id, userId);
             return StatusCode(response.StatusCode, new { message = response.Message, result = response.Data });
         }
+
+        [HttpGet("indicators")]
+        [HttpGet("/api/financial-indicators")]
+        public async Task<IActionResult> GetFinancialIndicators([FromQuery] decimal grossRevenue = 0)
+        {
+            var response = await service.GetFinancialIndicatorsAsync(grossRevenue);
+            return StatusCode(response.StatusCode, new { message = response.Message, result = response.Data });
+        }
     }
 }

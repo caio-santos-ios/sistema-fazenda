@@ -50,6 +50,14 @@ export interface CostCenterItem {
   updatedAt?: string;
 }
 
+export interface SourceLineItem {
+  id: string;
+  description: string;
+  value: number;
+  formattedText?: string;
+  costCenterId?: string;
+}
+
 export interface TreeItem {
   id: string;
   costCenterId?: string;
@@ -68,6 +76,7 @@ export interface TreeItem {
   hasAmbiguity?: boolean;
   alternativeCandidates?: any[];
   sourceDescriptions?: string[];
+  sourceLines?: SourceLineItem[];
   rawItem: any;
 }
 
@@ -114,8 +123,17 @@ export class CostCenters implements OnInit {
   importResult: any = null;
   importTreeData: TreeItem[] = [];
   importExpandedNodeIds: Set<string> = new Set<string>();
+  selectedImportCcIds: Set<string> = new Set<string>();
+  selectedImportLineIds: Set<string> = new Set<string>();
+  moveSelectedLineIds: Set<string> = new Set<string>();
   isConfirmImportModalOpen = false;
   isConfirmingImport = false;
+  isAssignCcModalOpen = false;
+  selectedUnmatchedRow: any = null;
+  selectedUnmatchedIndex = -1;
+  assignTargetCostCenterId = '';
+  assignApplyToSameDescription = true;
+  assignCcSearchQuery = '';
 
   isHistoryModalOpen = false;
   isLoadingHistory = false;
@@ -630,7 +648,11 @@ export class CostCenters implements OnInit {
     this.importResult = null;
     this.importTreeData = [];
     this.importExpandedNodeIds.clear();
+    this.selectedImportCcIds.clear();
+    this.selectedImportLineIds.clear();
+    this.moveSelectedLineIds.clear();
     this.isConfirmImportModalOpen = false;
+    this.closeAssignCcModal();
     this.cdr.detectChanges();
   }
 
@@ -640,7 +662,11 @@ export class CostCenters implements OnInit {
     this.importResult = null;
     this.importTreeData = [];
     this.importExpandedNodeIds.clear();
+    this.selectedImportCcIds.clear();
+    this.selectedImportLineIds.clear();
+    this.moveSelectedLineIds.clear();
     this.isConfirmImportModalOpen = false;
+    this.closeAssignCcModal();
     this.cdr.detectChanges();
   }
 
@@ -651,6 +677,10 @@ export class CostCenters implements OnInit {
       this.importResult = null;
       this.importTreeData = [];
       this.importExpandedNodeIds.clear();
+      this.selectedImportCcIds.clear();
+      this.selectedImportLineIds.clear();
+      this.moveSelectedLineIds.clear();
+      this.closeAssignCcModal();
       this.cdr.detectChanges();
     }
   }
@@ -660,6 +690,10 @@ export class CostCenters implements OnInit {
     this.importResult = null;
     this.importTreeData = [];
     this.importExpandedNodeIds.clear();
+    this.selectedImportCcIds.clear();
+    this.selectedImportLineIds.clear();
+    this.moveSelectedLineIds.clear();
+    this.closeAssignCcModal();
     this.cdr.detectChanges();
   }
 
@@ -685,6 +719,7 @@ export class CostCenters implements OnInit {
       const apiData = response.data?.result?.data || response.data?.result || response.data;
       this.importResult = apiData;
       this.importTreeData = this.importResult?.tree || [];
+      this.initializeImportSelection();
       this.expandAllImport();
 
       const msg = response.data?.message || 'Planilha processada com sucesso!';
@@ -696,6 +731,278 @@ export class CostCenters implements OnInit {
       this.isImporting = false;
       this.cdr.detectChanges();
     }
+  }
+
+  initializeNodeSourceLines(node: TreeItem) {
+    if (node.type !== 'costcenter') return;
+    if (!node.sourceLines || node.sourceLines.length === 0) {
+      if (this.importResult?.detailedLines) {
+        const matchingDetailed = this.importResult.detailedLines.filter(
+          (dl: any) => dl.costCenterId === node.costCenterId || dl.costCenterId === node.id || dl.costCenterCode === node.code
+        );
+        if (matchingDetailed.length > 0) {
+          node.sourceLines = matchingDetailed.map((dl: any, idx: number) => ({
+            id: dl.id || `${node.id}_line_${idx}`,
+            description: dl.sourceDescription,
+            value: dl.value || 0,
+            formattedText: `${dl.sourceDescription} (R$ ${(dl.value || 0).toFixed(2)})`,
+            costCenterId: dl.costCenterId
+          }));
+        }
+      }
+      if (!node.sourceLines || node.sourceLines.length === 0) {
+        if (node.sourceDescriptions && node.sourceDescriptions.length > 0) {
+          node.sourceLines = node.sourceDescriptions.map((desc: string, idx: number) => ({
+            id: `${node.id}_line_${idx}`,
+            description: desc,
+            value: node.sourceDescriptions!.length === 1 ? node.value : 0,
+            formattedText: desc,
+            costCenterId: node.costCenterId || node.id
+          }));
+        }
+      }
+    }
+  }
+
+  getNodeSourceLines(item: TreeItem): SourceLineItem[] {
+    this.initializeNodeSourceLines(item);
+    return item.sourceLines || [];
+  }
+
+  initializeImportSelection() {
+    this.selectedImportCcIds.clear();
+    this.selectedImportLineIds.clear();
+    const collectCcIds = (nodes: TreeItem[]) => {
+      for (const n of nodes) {
+        if (n.type === 'costcenter') {
+          this.initializeNodeSourceLines(n);
+          const id = n.costCenterId || (n.id.includes('_row_') ? n.id.split('_row_')[0] : n.id);
+          this.selectedImportCcIds.add(id);
+          if (n.sourceLines) {
+            for (const l of n.sourceLines) {
+              this.selectedImportLineIds.add(l.id);
+            }
+          }
+        }
+        if (n.children && n.children.length > 0) {
+          collectCcIds(n.children);
+        }
+      }
+    };
+    collectCcIds(this.importTreeData);
+  }
+
+  isSourceLineSelected(line: SourceLineItem): boolean {
+    return this.selectedImportLineIds.has(line.id);
+  }
+
+  toggleSourceLineSelection(item: TreeItem, line: SourceLineItem, event?: Event) {
+    if (event) event.stopPropagation();
+    if (this.selectedImportLineIds.has(line.id)) {
+      this.selectedImportLineIds.delete(line.id);
+    } else {
+      this.selectedImportLineIds.add(line.id);
+    }
+    const ccId = item.costCenterId || (item.id.includes('_row_') ? item.id.split('_row_')[0] : item.id);
+    const anySelected = item.sourceLines ? item.sourceLines.some(l => this.selectedImportLineIds.has(l.id)) : false;
+    if (anySelected) {
+      this.selectedImportCcIds.add(ccId);
+    } else {
+      this.selectedImportCcIds.delete(ccId);
+    }
+    this.cdr.detectChanges();
+  }
+
+  isCcSelected(item: TreeItem): boolean {
+    const id = item.costCenterId || (item.id.includes('_row_') ? item.id.split('_row_')[0] : item.id);
+    return this.selectedImportCcIds.has(id);
+  }
+
+  isCcFullySelected(item: TreeItem): boolean {
+    const id = item.costCenterId || (item.id.includes('_row_') ? item.id.split('_row_')[0] : item.id);
+    if (!this.selectedImportCcIds.has(id)) return false;
+    if (item.sourceLines && item.sourceLines.length > 0) {
+      return item.sourceLines.every(l => this.selectedImportLineIds.has(l.id));
+    }
+    return true;
+  }
+
+  isCcPartiallySelected(item: TreeItem): boolean {
+    if (!item.sourceLines || item.sourceLines.length <= 1) return false;
+    const selectedCount = item.sourceLines.filter(l => this.selectedImportLineIds.has(l.id)).length;
+    return selectedCount > 0 && selectedCount < item.sourceLines.length;
+  }
+
+  toggleCcSelection(item: TreeItem, event?: Event) {
+    if (event) event.stopPropagation();
+    const id = item.costCenterId || (item.id.includes('_row_') ? item.id.split('_row_')[0] : item.id);
+    const fullySelected = this.isCcFullySelected(item);
+    if (fullySelected) {
+      this.selectedImportCcIds.delete(id);
+      if (item.sourceLines) {
+        for (const l of item.sourceLines) this.selectedImportLineIds.delete(l.id);
+      }
+    } else {
+      this.selectedImportCcIds.add(id);
+      if (item.sourceLines) {
+        for (const l of item.sourceLines) this.selectedImportLineIds.add(l.id);
+      }
+    }
+    this.cdr.detectChanges();
+  }
+
+  getNodeCcIds(node: TreeItem): string[] {
+    const ids: string[] = [];
+    const collect = (n: TreeItem) => {
+      if (n.type === 'costcenter') {
+        const id = n.costCenterId || (n.id.includes('_row_') ? n.id.split('_row_')[0] : n.id);
+        ids.push(id);
+      }
+      if (n.children && n.children.length > 0) {
+        for (const child of n.children) collect(child);
+      }
+    };
+    collect(node);
+    return ids;
+  }
+
+  isNodeFullySelected(node: TreeItem): boolean {
+    const ids = this.getNodeCcIds(node);
+    if (ids.length === 0) return false;
+    return ids.every(id => this.selectedImportCcIds.has(id));
+  }
+
+  isNodePartiallySelected(node: TreeItem): boolean {
+    const ids = this.getNodeCcIds(node);
+    if (ids.length === 0) return false;
+    const selectedCount = ids.filter(id => this.selectedImportCcIds.has(id)).length;
+    return selectedCount > 0 && selectedCount < ids.length;
+  }
+
+  toggleNodeSelection(node: TreeItem, event?: Event) {
+    if (event) event.stopPropagation();
+    const ids = this.getNodeCcIds(node);
+    const allSelected = ids.every(id => this.selectedImportCcIds.has(id));
+    const toggleLines = (n: TreeItem, select: boolean) => {
+      if (n.type === 'costcenter' && n.sourceLines) {
+        for (const l of n.sourceLines) {
+          if (select) this.selectedImportLineIds.add(l.id);
+          else this.selectedImportLineIds.delete(l.id);
+        }
+      }
+      if (n.children) {
+        for (const c of n.children) toggleLines(c, select);
+      }
+    };
+    if (allSelected) {
+      for (const id of ids) this.selectedImportCcIds.delete(id);
+      toggleLines(node, false);
+    } else {
+      for (const id of ids) this.selectedImportCcIds.add(id);
+      toggleLines(node, true);
+    }
+    this.cdr.detectChanges();
+  }
+
+  getAllImportCcIds(): string[] {
+    const ids: string[] = [];
+    const collect = (nodes: TreeItem[]) => {
+      for (const n of nodes) {
+        if (n.type === 'costcenter') {
+          const id = n.costCenterId || (n.id.includes('_row_') ? n.id.split('_row_')[0] : n.id);
+          ids.push(id);
+        }
+        if (n.children && n.children.length > 0) {
+          collect(n.children);
+        }
+      }
+    };
+    collect(this.importTreeData);
+    return ids;
+  }
+
+  isAllImportSelected(): boolean {
+    const allIds = this.getAllImportCcIds();
+    return allIds.length > 0 && allIds.every(id => this.selectedImportCcIds.has(id));
+  }
+
+  isSomeImportSelected(): boolean {
+    const allIds = this.getAllImportCcIds();
+    if (allIds.length === 0) return false;
+    const count = allIds.filter(id => this.selectedImportCcIds.has(id)).length;
+    return count > 0 && count < allIds.length;
+  }
+
+  toggleSelectAllImport(event?: Event) {
+    if (event) event.stopPropagation();
+    const allSelected = this.isAllImportSelected();
+    this.selectAllImport(!allSelected);
+  }
+
+  selectAllImport(select: boolean) {
+    const allIds = this.getAllImportCcIds();
+    if (select) {
+      for (const id of allIds) this.selectedImportCcIds.add(id);
+      const addLines = (nodes: TreeItem[]) => {
+        for (const n of nodes) {
+          if (n.sourceLines) {
+            for (const l of n.sourceLines) this.selectedImportLineIds.add(l.id);
+          }
+          if (n.children) addLines(n.children);
+        }
+      };
+      addLines(this.importTreeData);
+    } else {
+      this.selectedImportCcIds.clear();
+      this.selectedImportLineIds.clear();
+    }
+    this.cdr.detectChanges();
+  }
+
+  get selectedCostCentersCount(): number {
+    const allIds = this.getAllImportCcIds();
+    return allIds.filter(id => this.selectedImportCcIds.has(id)).length;
+  }
+
+  get totalImportCostCentersCount(): number {
+    return this.getAllImportCcIds().length;
+  }
+
+  getItemSelectedValue(item: TreeItem): number {
+    if (item.type === 'costcenter') {
+      if (item.sourceLines && item.sourceLines.length > 0) {
+        return item.sourceLines
+          .filter(l => this.selectedImportLineIds.has(l.id))
+          .reduce((acc, l) => acc + (l.value || 0), 0);
+      }
+      const ccId = item.costCenterId || (item.id.includes('_row_') ? item.id.split('_row_')[0] : item.id);
+      return this.selectedImportCcIds.has(ccId) ? (item.value || 0) : 0;
+    }
+    let total = 0;
+    const sumChild = (n: TreeItem) => {
+      if (n.type === 'costcenter') {
+        total += this.getItemSelectedValue(n);
+      } else if (n.children) {
+        for (const c of n.children) sumChild(c);
+      }
+    };
+    sumChild(item);
+    return total;
+  }
+
+  get selectedImportTotalValue(): number {
+    let total = 0;
+    const traverse = (nodes: TreeItem[]) => {
+      for (const n of nodes) {
+        if (n.type === 'costcenter') {
+          total += this.getItemSelectedValue(n);
+        } else if (n.children && n.children.length > 0) {
+          traverse(n.children);
+        }
+      }
+    };
+    traverse(this.importTreeData);
+    return total;
   }
 
   get visibleImportRows(): TreeItem[] {
@@ -743,9 +1050,266 @@ export class CostCenters implements OnInit {
     this.cdr.detectChanges();
   }
 
+  openAssignCcModal(un: any, index: number) {
+    this.selectedUnmatchedRow = un;
+    this.selectedUnmatchedIndex = index;
+    this.assignCcSearchQuery = '';
+    this.assignApplyToSameDescription = true;
+    if (un.bestMatchId && this.allCostCenters.some(c => c.id === un.bestMatchId)) {
+      this.assignTargetCostCenterId = un.bestMatchId;
+    } else if (un.bestMatchName) {
+      const match = this.allCostCenters.find(c => c.name.toLowerCase() === un.bestMatchName.toLowerCase());
+      this.assignTargetCostCenterId = match?.id || '';
+    } else {
+      this.assignTargetCostCenterId = '';
+    }
+    this.isAssignCcModalOpen = true;
+    this.cdr.detectChanges();
+  }
+
+  closeAssignCcModal() {
+    this.isAssignCcModalOpen = false;
+    this.selectedUnmatchedRow = null;
+    this.selectedUnmatchedIndex = -1;
+    this.assignTargetCostCenterId = '';
+    this.assignCcSearchQuery = '';
+    this.cdr.detectChanges();
+  }
+
+  get selectedTargetCostCenter(): CostCenterItem | null {
+    if (!this.assignTargetCostCenterId) return null;
+    return this.allCostCenters.find(c => c.id === this.assignTargetCostCenterId) || null;
+  }
+
+  get selectedUnmatchedSameDescCount(): number {
+    if (!this.selectedUnmatchedRow || !this.importResult?.unmatchedRows) return 0;
+    return this.importResult.unmatchedRows.filter((r: any) => r.description === this.selectedUnmatchedRow.description).length;
+  }
+
+  get filteredAssignCostCenters(): CostCenterItem[] {
+    const q = this.assignCcSearchQuery?.trim().toLowerCase() || '';
+    if (!q) return this.allCostCenters;
+    return this.allCostCenters.filter(cc =>
+      cc.code?.toLowerCase().includes(q) ||
+      cc.name?.toLowerCase().includes(q) ||
+      cc.groupCode?.toLowerCase().includes(q) ||
+      cc.subGroupCode?.toLowerCase().includes(q)
+    );
+  }
+
+  getCostCenterHierarchyPath(cc: CostCenterItem | null): string {
+    if (!cc) return '';
+    const g = this.allGroups.find(x => x.code === cc.groupCode);
+    const sg = this.allSubGroups.find(x => x.code === cc.subGroupCode);
+    const scc = cc.subCostCenter ? this.allSubCostCenters.find(x => x.code === cc.subCostCenter) : null;
+    let path = `${g?.name || cc.groupCode} > ${sg?.name || cc.subGroupCode}`;
+    if (scc) path += ` > ${scc.name}`;
+    return path;
+  }
+
+  getQuickMatchCc(un: any): CostCenterItem | null {
+    if (!un) return null;
+    if (un.bestMatchId) {
+      const found = this.allCostCenters.find(c => c.id === un.bestMatchId);
+      if (found) return found;
+    }
+    if (un.bestMatchName) {
+      return this.allCostCenters.find(c => c.name.toLowerCase() === un.bestMatchName.toLowerCase()) || null;
+    }
+    return null;
+  }
+
+  quickAssignCc(un: any, event?: Event) {
+    if (event) event.stopPropagation();
+    const target = this.getQuickMatchCc(un);
+    if (!target) return;
+    this.assignUnmatchedToCostCenter(un, target.id, true);
+  }
+
+  confirmAssignCc() {
+    if (!this.selectedUnmatchedRow || !this.assignTargetCostCenterId) {
+      this.toastr.warning('Selecione um Centro de Custo para vincular.');
+      return;
+    }
+    this.assignUnmatchedToCostCenter(this.selectedUnmatchedRow, this.assignTargetCostCenterId, this.assignApplyToSameDescription);
+    this.closeAssignCcModal();
+  }
+
+  assignUnmatchedToCostCenter(unmatchedRow: any, targetCostCenterId: string, applyToAllSameDescription: boolean) {
+    const targetCc = this.allCostCenters.find(c => c.id === targetCostCenterId);
+    if (!targetCc) {
+      this.toastr.error('Centro de Custo não encontrado.');
+      return;
+    }
+
+    if (!this.importResult || !this.importResult.unmatchedRows) return;
+
+    const rowsToAssign = applyToAllSameDescription
+      ? this.importResult.unmatchedRows.filter((r: any) => r.description === unmatchedRow.description)
+      : [unmatchedRow];
+
+    if (rowsToAssign.length === 0) return;
+
+    const totalValueToAdd = rowsToAssign.reduce((acc: number, r: any) => acc + (r.value || 0), 0);
+    const newSourceDescs = rowsToAssign.map((r: any) => `${r.description} (R$ ${(r.value || 0).toFixed(2)})`);
+
+    if (!this.importResult.detailedLines) {
+      this.importResult.detailedLines = [];
+    }
+
+    const hierarchyPath = this.getCostCenterHierarchyPath(targetCc);
+
+    for (const r of rowsToAssign) {
+      this.importResult.detailedLines.push({
+        costCenterId: targetCc.id,
+        costCenterCode: targetCc.code,
+        costCenterName: targetCc.name,
+        hierarchyPath: hierarchyPath,
+        sourceDescription: r.description,
+        value: r.value || 0
+      });
+    }
+
+    let groupNode = this.importTreeData.find(grp => grp.code === targetCc.groupCode);
+    if (!groupNode) {
+      const grpInfo = this.allGroups.find(grp => grp.code === targetCc.groupCode);
+      groupNode = {
+        id: grpInfo?.id || `grp_${targetCc.groupCode}`,
+        code: targetCc.groupCode,
+        name: grpInfo?.name || `Grupo ${targetCc.groupCode}`,
+        type: 'group',
+        level: 0,
+        value: 0,
+        hasChildren: true,
+        children: [],
+        rawItem: grpInfo
+      };
+      this.importTreeData.push(groupNode);
+      this.importTreeData.sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true, sensitivity: 'base' }));
+    }
+
+    let subGroupNode = groupNode.children.find(sgrp => sgrp.code === targetCc.subGroupCode);
+    if (!subGroupNode) {
+      const sgInfo = this.allSubGroups.find(sgrp => sgrp.code === targetCc.subGroupCode);
+      subGroupNode = {
+        id: sgInfo?.id || `sg_${targetCc.subGroupCode}`,
+        code: targetCc.subGroupCode,
+        name: sgInfo?.name || `SubGrupo ${targetCc.subGroupCode}`,
+        type: 'subgroup',
+        level: 1,
+        value: 0,
+        groupCode: targetCc.groupCode,
+        hasChildren: true,
+        children: [],
+        rawItem: sgInfo
+      };
+      groupNode.children.push(subGroupNode);
+      groupNode.hasChildren = true;
+      groupNode.children.sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true, sensitivity: 'base' }));
+    }
+
+    let targetContainer = subGroupNode;
+    let newLevel = 2;
+    if (targetCc.subCostCenter) {
+      let subCcNode = subGroupNode.children.find(scc => scc.code === targetCc.subCostCenter && scc.type === 'subcostcenter');
+      if (!subCcNode) {
+        const sccInfo = this.allSubCostCenters.find(c => c.code === targetCc.subCostCenter);
+        subCcNode = {
+          id: sccInfo?.id || `scc_${targetCc.subCostCenter}`,
+          code: targetCc.subCostCenter,
+          name: sccInfo?.name || `SubCentro ${targetCc.subCostCenter}`,
+          type: 'subcostcenter',
+          level: 2,
+          value: 0,
+          groupCode: targetCc.groupCode,
+          subGroupCode: targetCc.subGroupCode,
+          hasChildren: true,
+          children: [],
+          rawItem: sccInfo
+        };
+        subGroupNode.children.push(subCcNode);
+        subGroupNode.hasChildren = true;
+        subGroupNode.children.sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true, sensitivity: 'base' }));
+      }
+      targetContainer = subCcNode;
+      newLevel = 3;
+    }
+
+    const existingCc = targetContainer.children.find(c =>
+      c.type === 'costcenter' && (c.costCenterId === targetCc.id || c.id === targetCc.id || c.code === targetCc.code)
+    );
+
+    if (existingCc) {
+      existingCc.value = (existingCc.value || 0) + totalValueToAdd;
+      if (!existingCc.sourceDescriptions) existingCc.sourceDescriptions = [];
+      existingCc.sourceDescriptions.push(...newSourceDescs);
+      const ccId = existingCc.costCenterId || existingCc.id;
+      this.selectedImportCcIds.add(ccId);
+    } else {
+      const newCcItem: TreeItem = {
+        id: targetCc.id,
+        costCenterId: targetCc.id,
+        code: targetCc.code,
+        name: targetCc.name,
+        type: 'costcenter',
+        level: newLevel,
+        value: totalValueToAdd,
+        groupCode: targetCc.groupCode,
+        subGroupCode: targetCc.subGroupCode,
+        subCostCenter: targetCc.subCostCenter || '',
+        sourceDescriptions: newSourceDescs,
+        hasChildren: false,
+        children: [],
+        rawItem: targetCc
+      };
+      targetContainer.children.push(newCcItem);
+      targetContainer.hasChildren = true;
+      targetContainer.children.sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true, sensitivity: 'base' }));
+      this.selectedImportCcIds.add(targetCc.id);
+    }
+
+    const recalculateValues = (node: TreeItem): number => {
+      if (node.type === 'costcenter') {
+        return node.value || 0;
+      }
+      let sum = 0;
+      if (node.children) {
+        for (const child of node.children) {
+          sum += recalculateValues(child);
+        }
+      }
+      node.value = sum;
+      return sum;
+    };
+    for (const grp of this.importTreeData) {
+      recalculateValues(grp);
+    }
+
+    this.importExpandedNodeIds.add(groupNode.id);
+    this.importExpandedNodeIds.add(subGroupNode.id);
+    if (targetCc.subCostCenter && targetContainer.id) {
+      this.importExpandedNodeIds.add(targetContainer.id);
+    }
+
+    if (applyToAllSameDescription) {
+      this.importResult.unmatchedRows = this.importResult.unmatchedRows.filter((r: any) => r.description !== unmatchedRow.description);
+    } else {
+      const idx = this.importResult.unmatchedRows.indexOf(unmatchedRow);
+      if (idx >= 0) {
+        this.importResult.unmatchedRows.splice(idx, 1);
+      }
+    }
+    this.importResult.unmatchedCount = this.importResult.unmatchedRows.length;
+    this.importResult.matchedCount = this.totalImportCostCentersCount;
+
+    const countText = rowsToAssign.length > 1 ? `${rowsToAssign.length} linhas vinculadas` : 'Linha vinculada';
+    this.toastr.success(`${countText} ao Centro de Custo ${targetCc.code} - ${targetCc.name} com sucesso!`, 'Vinculado com Sucesso');
+    this.cdr.detectChanges();
+  }
+
   openConfirmImportModal() {
-    if (!this.importResult?.matchedItems || this.importResult.matchedItems.length === 0) {
-      this.toastr.warning('Nenhum centro de custo identificado para confirmar');
+    if (this.selectedCostCentersCount === 0) {
+      this.toastr.warning('Selecione ao menos um Centro de Custo para confirmar a importação.', 'Atenção');
       return;
     }
     this.isConfirmImportModalOpen = true;
@@ -760,6 +1324,11 @@ export class CostCenters implements OnInit {
   async executeConfirmImport() {
     if (!this.importTreeData || this.importTreeData.length === 0) return;
 
+    if (this.selectedCostCentersCount === 0) {
+      this.toastr.warning('Nenhum Centro de Custo selecionado para importação.', 'Atenção');
+      return;
+    }
+
     this.isConfirmingImport = true;
     this.cdr.detectChanges();
 
@@ -771,8 +1340,12 @@ export class CostCenters implements OnInit {
         for (const n of nodes) {
           if (n.type === 'costcenter') {
             const ccId = n.costCenterId || (n.id.includes('_row_') ? n.id.split('_row_')[0] : n.id);
+            if (!this.selectedImportCcIds.has(ccId)) {
+              continue;
+            }
+            const selectedVal = this.getItemSelectedValue(n);
             const current = ccTotals.get(ccId) || { id: ccId, code: n.code, value: 0 };
-            current.value += (n.value || 0);
+            current.value += selectedVal;
             ccTotals.set(ccId, current);
 
             ccFinalLocation.set(ccId, {
@@ -790,9 +1363,9 @@ export class CostCenters implements OnInit {
       };
       traverse(this.importTreeData);
 
-      const items = Array.from(ccTotals.values());
+      const items = Array.from(ccTotals.values()).filter(it => it.value > 0 || this.selectedImportCcIds.has(it.id));
       if (items.length === 0) {
-        this.toastr.warning('Nenhum item identificado para confirmação.', 'Aviso');
+        this.toastr.warning('Nenhum Centro de Custo marcado para confirmação.', 'Aviso');
         return;
       }
 
@@ -801,6 +1374,12 @@ export class CostCenters implements OnInit {
 
       if (originalLines.length > 0) {
         for (const line of originalLines) {
+          if (!ccTotals.has(line.costCenterId)) {
+            continue;
+          }
+          if (line.id && !this.selectedImportLineIds.has(line.id)) {
+            continue;
+          }
           const finalLoc = ccFinalLocation.get(line.costCenterId);
           detailedLines.push({
             costCenterId: line.costCenterId,
@@ -812,7 +1391,6 @@ export class CostCenters implements OnInit {
           });
         }
       } else {
-
         for (const it of items) {
           const finalLoc = ccFinalLocation.get(it.id);
           detailedLines.push({
@@ -826,12 +1404,14 @@ export class CostCenters implements OnInit {
         }
       }
 
+      const totalVal = items.reduce((acc, it) => acc + it.value, 0);
+
       const payload = {
         fileName: this.importResult?.fileName || this.selectedFile?.name || 'Planilha Importada',
         totalRows: this.importResult?.totalRows || detailedLines.length,
         matchedCount: items.length,
         unmatchedCount: this.importResult?.unmatchedCount || 0,
-        totalValue: this.importResult?.totalMatchedValue || items.reduce((acc, it) => acc + it.value, 0),
+        totalValue: totalVal,
         items,
         lines: detailedLines
       };
@@ -885,11 +1465,22 @@ export class CostCenters implements OnInit {
     return this.allSubCostCenters.filter(scc => scc.groupCode === this.moveTargetGroup && scc.subGroupCode === this.moveTargetSubGroup);
   }
 
-  async openMoveModal(item: TreeItem, context: 'main' | 'import', preSelectedTarget?: TreeItem) {
+  async openMoveModal(item: TreeItem, context: 'main' | 'import', preSelectedTarget?: TreeItem, preSelectedLines?: SourceLineItem[]) {
     this.itemToMove = item;
     this.moveContext = context;
     this.isMoveModalOpen = true;
     this.suggestedMoveCode = '';
+    this.moveSelectedLineIds.clear();
+
+    this.initializeNodeSourceLines(item);
+
+    if (context === 'import' && item.sourceLines) {
+      if (preSelectedLines && preSelectedLines.length > 0) {
+        for (const l of preSelectedLines) this.moveSelectedLineIds.add(l.id);
+      } else {
+        for (const l of item.sourceLines) this.moveSelectedLineIds.add(l.id);
+      }
+    }
 
     if (preSelectedTarget) {
       this.populateMoveFromTarget(preSelectedTarget);
@@ -902,6 +1493,64 @@ export class CostCenters implements OnInit {
 
     await this.updateMovePreviewCode();
     this.cdr.detectChanges();
+  }
+
+  openMoveModalForLines(item: TreeItem, linesToMove?: SourceLineItem[], event?: Event, targetAlt?: any) {
+    if (event) event.stopPropagation();
+    this.initializeNodeSourceLines(item);
+    let preSelectedTarget: TreeItem | undefined;
+    if (targetAlt) {
+      preSelectedTarget = {
+        id: targetAlt.id,
+        code: targetAlt.code,
+        name: targetAlt.name,
+        type: targetAlt.subCostCenter ? 'subcostcenter' : 'subgroup',
+        level: 2,
+        value: 0,
+        groupCode: targetAlt.groupCode,
+        subGroupCode: targetAlt.subGroupCode,
+        subCostCenter: targetAlt.subCostCenter,
+        hasChildren: false,
+        children: [],
+        rawItem: targetAlt
+      };
+    }
+    this.openMoveModal(item, 'import', preSelectedTarget, linesToMove);
+  }
+
+  toggleMoveLineSelection(line: SourceLineItem) {
+    if (this.moveSelectedLineIds.has(line.id)) {
+      this.moveSelectedLineIds.delete(line.id);
+    } else {
+      this.moveSelectedLineIds.add(line.id);
+    }
+    this.cdr.detectChanges();
+  }
+
+  toggleAllMoveLines(event: any) {
+    const checked = event.target.checked;
+    if (checked && this.itemToMove?.sourceLines) {
+      for (const l of this.itemToMove.sourceLines) this.moveSelectedLineIds.add(l.id);
+    } else {
+      this.moveSelectedLineIds.clear();
+    }
+    this.cdr.detectChanges();
+  }
+
+  get isAllMoveLinesSelected(): boolean {
+    if (!this.itemToMove?.sourceLines || this.itemToMove.sourceLines.length === 0) return false;
+    return this.itemToMove.sourceLines.every(l => this.moveSelectedLineIds.has(l.id));
+  }
+
+  get selectedMoveLinesCount(): number {
+    return this.moveSelectedLineIds.size;
+  }
+
+  get selectedMoveLinesTotalValue(): number {
+    if (!this.itemToMove?.sourceLines) return 0;
+    return this.itemToMove.sourceLines
+      .filter(l => this.moveSelectedLineIds.has(l.id))
+      .reduce((acc, l) => acc + (l.value || 0), 0);
   }
 
   populateMoveFromTarget(target: TreeItem) {
@@ -998,6 +1647,9 @@ export class CostCenters implements OnInit {
     if (!this.itemToMove) return false;
     if (!this.moveTargetGroup || !this.moveTargetSubGroup) return false;
     if (this.moveHasSubCostCenter && !this.moveTargetSubCostCenter) return false;
+    if (this.moveContext === 'import' && this.itemToMove.sourceLines && this.itemToMove.sourceLines.length > 0 && this.moveSelectedLineIds.size === 0) {
+      return false;
+    }
     return true;
   }
 
@@ -1015,6 +1667,7 @@ export class CostCenters implements OnInit {
     this.isMoveModalOpen = false;
     this.itemToMove = null;
     this.suggestedMoveCode = '';
+    this.moveSelectedLineIds.clear();
     this.isMoving = false;
     this.cdr.detectChanges();
   }
@@ -1046,13 +1699,27 @@ export class CostCenters implements OnInit {
       }
     } else {
       try {
-        this.applyImportTreeMove(
-          this.itemToMove,
-          this.moveTargetGroup,
-          this.moveTargetSubGroup,
-          this.moveHasSubCostCenter && this.moveTargetSubCostCenter ? this.moveTargetSubCostCenter : ''
-        );
-        this.toastr.success(`Item "${this.itemToMove.name}" transferido no plano de importação!`, 'Reorganizado!');
+        const hasSourceLines = this.itemToMove.sourceLines && this.itemToMove.sourceLines.length > 0;
+        const isSplitting = hasSourceLines && this.moveSelectedLineIds.size < this.itemToMove.sourceLines!.length;
+
+        if (isSplitting) {
+          this.applyImportSplitLinesMove(
+            this.itemToMove,
+            this.moveSelectedLineIds,
+            this.moveTargetGroup,
+            this.moveTargetSubGroup,
+            this.moveHasSubCostCenter && this.moveTargetSubCostCenter ? this.moveTargetSubCostCenter : ''
+          );
+          this.toastr.success(`${this.moveSelectedLineIds.size} linha(s) transferida(s) no plano de importação!`, 'Reorganizado!');
+        } else {
+          this.applyImportTreeMove(
+            this.itemToMove,
+            this.moveTargetGroup,
+            this.moveTargetSubGroup,
+            this.moveHasSubCostCenter && this.moveTargetSubCostCenter ? this.moveTargetSubCostCenter : ''
+          );
+          this.toastr.success(`Item "${this.itemToMove.name}" transferido no plano de importação!`, 'Reorganizado!');
+        }
         this.closeMoveModal();
       } catch (err: any) {
         this.toastr.error('Erro ao reorganizar item: ' + err.message, 'Erro');
@@ -1061,6 +1728,205 @@ export class CostCenters implements OnInit {
         this.cdr.detectChanges();
       }
     }
+  }
+
+  applyImportSplitLinesMove(
+    sourceItem: TreeItem,
+    selectedLineIds: Set<string>,
+    targetGroupCode: string,
+    targetSubGroupCode: string,
+    targetSubCostCenterCode: string,
+    targetCode?: string,
+    targetId?: string
+  ) {
+    if (!this.importResult || !this.importTreeData || !sourceItem.sourceLines) return;
+
+    const linesToMove = sourceItem.sourceLines.filter(l => selectedLineIds.has(l.id));
+    const linesToKeep = sourceItem.sourceLines.filter(l => !selectedLineIds.has(l.id));
+
+    if (linesToMove.length === 0) return;
+
+    const moveVal = linesToMove.reduce((acc, l) => acc + (l.value || 0), 0);
+
+    sourceItem.value = (sourceItem.value || 0) - moveVal;
+    sourceItem.sourceLines = linesToKeep;
+    sourceItem.sourceDescriptions = linesToKeep.map(l => l.formattedText || l.description);
+
+    let groupNode = this.importTreeData.find(g => g.code === targetGroupCode);
+    if (!groupNode) {
+      const grpInfo = this.allGroups.find(g => g.code === targetGroupCode);
+      groupNode = {
+        id: grpInfo?.id || `grp_${targetGroupCode}`,
+        code: targetGroupCode,
+        name: grpInfo?.name || `Grupo ${targetGroupCode}`,
+        type: 'group',
+        level: 0,
+        value: 0,
+        hasChildren: true,
+        children: [],
+        rawItem: grpInfo
+      };
+      this.importTreeData.push(groupNode);
+      this.importTreeData.sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true, sensitivity: 'base' }));
+    }
+
+    let subGroupNode = groupNode.children.find(sg => sg.code === targetSubGroupCode);
+    if (!subGroupNode) {
+      const sgInfo = this.allSubGroups.find(sg => sg.code === targetSubGroupCode);
+      subGroupNode = {
+        id: sgInfo?.id || `sg_${targetSubGroupCode}`,
+        code: targetSubGroupCode,
+        name: sgInfo?.name || `SubGrupo ${targetSubGroupCode}`,
+        type: 'subgroup',
+        level: 1,
+        value: 0,
+        groupCode: targetGroupCode,
+        hasChildren: true,
+        children: [],
+        rawItem: sgInfo
+      };
+      groupNode.children.push(subGroupNode);
+      groupNode.hasChildren = true;
+      groupNode.children.sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true, sensitivity: 'base' }));
+    }
+
+    let targetContainer = subGroupNode;
+    let newLevel = 2;
+    if (targetSubCostCenterCode) {
+      let subCcNode = subGroupNode.children.find(scc => scc.code === targetSubCostCenterCode && scc.type === 'subcostcenter');
+      if (!subCcNode) {
+        const sccInfo = this.allSubCostCenters.find(c => c.code === targetSubCostCenterCode);
+        subCcNode = {
+          id: sccInfo?.id || `scc_${targetSubCostCenterCode}`,
+          code: targetSubCostCenterCode,
+          name: sccInfo?.name || `SubCentro ${targetSubCostCenterCode}`,
+          type: 'subcostcenter',
+          level: 2,
+          value: 0,
+          groupCode: targetGroupCode,
+          subGroupCode: targetSubGroupCode,
+          hasChildren: true,
+          children: [],
+          rawItem: sccInfo
+        };
+        subGroupNode.children.push(subCcNode);
+        subGroupNode.hasChildren = true;
+        subGroupNode.children.sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true, sensitivity: 'base' }));
+      }
+      targetContainer = subCcNode;
+      newLevel = 3;
+    }
+
+    let finalCcCode = targetCode;
+    let finalCcId = targetId;
+    let finalCcName = sourceItem.name;
+
+    const matchInTarget = this.allCostCenters.find(c =>
+      c.name?.trim().toLowerCase() === sourceItem.name?.trim().toLowerCase() &&
+      c.groupCode === targetGroupCode &&
+      c.subGroupCode === targetSubGroupCode &&
+      (targetSubCostCenterCode ? c.subCostCenter === targetSubCostCenterCode : (!c.subCostCenter || c.subCostCenter === ''))
+    );
+
+    if (matchInTarget) {
+      finalCcCode = finalCcCode || matchInTarget.code;
+      finalCcId = finalCcId || matchInTarget.id;
+      finalCcName = matchInTarget.name;
+    } else if (!finalCcCode) {
+      const parentCode = targetSubCostCenterCode || targetSubGroupCode;
+      finalCcCode = `${parentCode}.*`;
+      finalCcId = finalCcId || `cc_split_${Date.now()}`;
+    }
+
+    const existingCc = targetContainer.children.find(c =>
+      c.type === 'costcenter' && (
+        (finalCcId && (c.costCenterId === finalCcId || c.id === finalCcId)) ||
+        (finalCcCode && c.code === finalCcCode) ||
+        (c.name.trim().toLowerCase() === sourceItem.name.trim().toLowerCase())
+      )
+    );
+
+    let effectiveCcId = finalCcId || sourceItem.id;
+
+    if (existingCc) {
+      existingCc.value = (existingCc.value || 0) + moveVal;
+      if (!existingCc.sourceLines) existingCc.sourceLines = [];
+      existingCc.sourceLines.push(...linesToMove);
+      if (!existingCc.sourceDescriptions) existingCc.sourceDescriptions = [];
+      existingCc.sourceDescriptions.push(...linesToMove.map(l => l.formattedText || l.description));
+      effectiveCcId = existingCc.costCenterId || existingCc.id;
+      this.selectedImportCcIds.add(effectiveCcId);
+    } else {
+      const newCcItem: TreeItem = {
+        id: finalCcId || `cc_${finalCcCode}_${Date.now()}`,
+        costCenterId: finalCcId || sourceItem.costCenterId,
+        code: finalCcCode || sourceItem.code,
+        name: finalCcName,
+        type: 'costcenter',
+        level: newLevel,
+        value: moveVal,
+        groupCode: targetGroupCode,
+        subGroupCode: targetSubGroupCode,
+        subCostCenter: targetSubCostCenterCode || '',
+        sourceLines: [...linesToMove],
+        sourceDescriptions: linesToMove.map(l => l.formattedText || l.description),
+        hasChildren: false,
+        children: [],
+        rawItem: matchInTarget || sourceItem.rawItem
+      };
+      targetContainer.children.push(newCcItem);
+      targetContainer.hasChildren = true;
+      targetContainer.children.sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true, sensitivity: 'base' }));
+      effectiveCcId = newCcItem.costCenterId || newCcItem.id;
+      this.selectedImportCcIds.add(effectiveCcId);
+    }
+
+    if (this.importResult?.detailedLines) {
+      const grp = this.allGroups.find(g => g.code === targetGroupCode);
+      const subGrp = this.allSubGroups.find(sg => sg.code === targetSubGroupCode);
+      const scc = targetSubCostCenterCode ? this.allSubCostCenters.find(c => c.code === targetSubCostCenterCode) : null;
+      let path = `${grp?.name || targetGroupCode} > ${subGrp?.name || targetSubGroupCode}`;
+      if (scc) path += ` > ${scc.name}`;
+
+      for (const movedLine of linesToMove) {
+        const found = this.importResult.detailedLines.find((dl: any) =>
+          (movedLine.id && dl.id === movedLine.id) ||
+          (dl.costCenterId === (sourceItem.costCenterId || sourceItem.id) && dl.sourceDescription === movedLine.description && dl.value === movedLine.value)
+        );
+        if (found) {
+          found.costCenterId = effectiveCcId;
+          found.costCenterCode = finalCcCode || found.costCenterCode;
+          found.costCenterName = finalCcName;
+          found.hierarchyPath = path;
+        }
+      }
+    }
+
+    const recalculateValues = (node: TreeItem): number => {
+      if (node.type === 'costcenter') {
+        return node.value || 0;
+      }
+      let sum = 0;
+      if (node.children) {
+        for (const child of node.children) {
+          sum += recalculateValues(child);
+        }
+      }
+      node.value = sum;
+      return sum;
+    };
+
+    for (const grp of this.importTreeData) {
+      recalculateValues(grp);
+    }
+
+    this.importExpandedNodeIds.add(groupNode.id);
+    this.importExpandedNodeIds.add(subGroupNode.id);
+    if (targetSubCostCenterCode && targetContainer.id) {
+      this.importExpandedNodeIds.add(targetContainer.id);
+    }
+
+    this.cdr.detectChanges();
   }
 
   applyImportTreeMove(
@@ -1195,6 +2061,10 @@ export class CostCenters implements OnInit {
 
     if (existingCc && existingCc.id !== item.id) {
       existingCc.value = (existingCc.value || 0) + (item.value || 0);
+      if (item.sourceLines && item.sourceLines.length > 0) {
+        if (!existingCc.sourceLines) existingCc.sourceLines = [];
+        existingCc.sourceLines.push(...item.sourceLines);
+      }
       if (item.sourceDescriptions && item.sourceDescriptions.length > 0) {
         if (!existingCc.sourceDescriptions) existingCc.sourceDescriptions = [];
         existingCc.sourceDescriptions.push(...item.sourceDescriptions);
@@ -1203,10 +2073,17 @@ export class CostCenters implements OnInit {
         existingCc.hasAmbiguity = true;
         existingCc.alternativeCandidates = item.alternativeCandidates || existingCc.alternativeCandidates;
       }
+      const oldId = item.costCenterId || item.id;
+      const existId = existingCc.costCenterId || existingCc.id;
+      if (this.selectedImportCcIds.has(oldId)) {
+        this.selectedImportCcIds.add(existId);
+      }
     } else {
       targetContainer.children.push(item);
       targetContainer.hasChildren = true;
       targetContainer.children.sort((a, b) => a.code.localeCompare(b.code));
+      const newId = item.costCenterId || item.id;
+      this.selectedImportCcIds.add(newId);
     }
 
     const recalculateValues = (node: TreeItem): number => {
@@ -1303,6 +2180,16 @@ export class CostCenters implements OnInit {
       return `${subGrp} > ${scc}`;
     }
     return `${grp} > ${subGrp}`;
+  }
+
+  onSwitchDestinationClick(item: TreeItem, alt: any, event?: Event) {
+    if (event) event.stopPropagation();
+    this.initializeNodeSourceLines(item);
+    if (item.sourceLines && item.sourceLines.length > 1) {
+      this.openMoveModalForLines(item, undefined, event, alt);
+    } else {
+      this.quickSwitchDestination(item, alt);
+    }
   }
 
   quickSwitchDestination(item: TreeItem, alt: any) {

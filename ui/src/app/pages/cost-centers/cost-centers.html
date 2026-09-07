@@ -491,37 +491,39 @@
               <span class="stat-val">{{ importResult.totalRows }}</span>
             </div>
             <div class="import-stat-item stat-success">
-              <span class="stat-lbl">Centros Identificados</span>
+              <span class="stat-lbl">Identificados na Base</span>
               <span class="stat-val">{{ importResult.matchedCount }}</span>
+            </div>
+            <div class="import-stat-item stat-selected">
+              <span class="stat-lbl">Selecionados p/ Gravar</span>
+              <span class="stat-val" [class.text-warning]="selectedCostCentersCount < totalImportCostCentersCount">{{ selectedCostCentersCount }} / {{ totalImportCostCentersCount }}</span>
             </div>
             <div class="import-stat-item stat-warning" *ngIf="importResult.unmatchedCount > 0">
               <span class="stat-lbl">Não Identificados</span>
               <span class="stat-val">{{ importResult.unmatchedCount }}</span>
             </div>
             <div class="import-stat-item stat-ambiguous" *ngIf="importResult.ambiguousCount > 0">
-              <span class="stat-lbl"><i class="fa-solid fa-triangle-exclamation text-warning"></i> Atenção (Múltiplos Destinos)</span>
+              <span class="stat-lbl"><i class="fa-solid fa-triangle-exclamation text-warning"></i> Atenção (Múltiplos)</span>
               <span class="stat-val text-warning">{{ importResult.ambiguousCount }}</span>
             </div>
-            <div class="import-stat-item stat-detected">
-              <span class="stat-lbl">Coluna Descrição</span>
-              <span class="stat-badge">{{ importResult.detectedDescriptionColumn }}</span>
-            </div>
-            <div class="import-stat-item stat-detected">
-              <span class="stat-lbl">Coluna Valor</span>
-              <span class="stat-badge">{{ importResult.detectedValueColumn }}</span>
-            </div>
             <div class="import-stat-item stat-total-val">
-              <span class="stat-lbl">Valor Total Identificado</span>
-              <span class="stat-val text-success">{{ global.formatCurrency(importResult.totalMatchedValue) }}</span>
+              <span class="stat-lbl">Valor Total Selecionado</span>
+              <span class="stat-val text-success">{{ global.formatCurrency(selectedImportTotalValue) }}</span>
             </div>
           </div>
 
           <div class="import-tree-toolbar">
             <div class="toolbar-hint">
               <i class="fa-solid fa-info-circle text-info"></i>
-              <span>Confira abaixo se os Centros de Custo e valores mapeados estão sob os Grupos e SubGrupos corretos:</span>
+              <span>Marque os centros de custo desejados e confira a estrutura antes de confirmar:</span>
             </div>
             <div class="tree-controls">
+              <button class="btn btn-outline btn-sm" (click)="selectAllImport(true)" title="Marcar todos os centros de custo">
+                <i class="fa-solid fa-square-check"></i> Marcar Todos
+              </button>
+              <button class="btn btn-outline btn-sm" (click)="selectAllImport(false)" title="Desmarcar todos os centros de custo">
+                <i class="fa-regular fa-square"></i> Desmarcar Todos
+              </button>
               <button class="btn btn-outline btn-sm" (click)="expandAllImport()" title="Expandir todos os níveis">
                 <i class="fa-solid fa-angles-down"></i> Expandir Tudo
               </button>
@@ -538,7 +540,20 @@
             <table class="table tree-table">
               <thead>
                 <tr>
-                  <th style="min-width: 420px;">Estrutura Hierárquica (Grupo &gt; SubGrupo &gt; SubCentro &gt; Centro)</th>
+                  <th style="min-width: 440px;">
+                    <div class="header-chk-cell">
+                      <label class="custom-checkbox" (click)="$event.stopPropagation()" title="Marcar / Desmarcar Todos">
+                        <input
+                          type="checkbox"
+                          [checked]="isAllImportSelected()"
+                          [indeterminate]="isSomeImportSelected()"
+                          (change)="toggleSelectAllImport($event)"
+                        />
+                        <span class="chk-box"></span>
+                      </label>
+                      <span>Estrutura Hierárquica (Grupo &gt; SubGrupo &gt; SubCentro &gt; Centro)</span>
+                    </div>
+                  </th>
                   <th style="width: 200px; text-align: right;">Valor da Planilha</th>
                   <th style="min-width: 280px;">Origem na Planilha / Descrições Encontradas</th>
                   <th style="width: 90px; text-align: right;">Ações</th>
@@ -552,7 +567,8 @@
                     'level-' + item.level,
                     dragOverTargetId === item.id ? 'drag-target-hover' : '',
                     draggedItem?.id === item.id ? 'is-dragging' : '',
-                    item.type === 'costcenter' && (item.hasAmbiguity || item.rawItem?.hasAmbiguity) ? 'row-has-ambiguity' : ''
+                    item.type === 'costcenter' && (item.hasAmbiguity || item.rawItem?.hasAmbiguity) ? 'row-has-ambiguity' : '',
+                    item.type === 'costcenter' && !isCcSelected(item) ? 'row-unselected' : ''
                   ]"
                   [attr.draggable]="item.type === 'costcenter' ? 'true' : null"
                   (dragstart)="onDragStart(item, $event, 'import')"
@@ -564,6 +580,27 @@
 
                   <td class="name-cell" [style.padding-left.px]="item.level * 28 + 16">
                     <div class="tree-node-wrapper">
+
+                      <label
+                        class="custom-checkbox row-chk"
+                        (click)="$event.stopPropagation()"
+                        [title]="item.type === 'costcenter' ? (isCcSelected(item) ? 'Desmarcar para não importar' : 'Marcar para importar') : (isNodeFullySelected(item) ? 'Desmarcar todos deste nível' : 'Marcar todos deste nível')"
+                      >
+                        <input
+                          type="checkbox"
+                          *ngIf="item.type === 'costcenter'"
+                          [checked]="isCcSelected(item)"
+                          (change)="toggleCcSelection(item, $event)"
+                        />
+                        <input
+                          type="checkbox"
+                          *ngIf="item.type !== 'costcenter'"
+                          [checked]="isNodeFullySelected(item)"
+                          [indeterminate]="isNodePartiallySelected(item)"
+                          (change)="toggleNodeSelection(item, $event)"
+                        />
+                        <span class="chk-box"></span>
+                      </label>
 
                       <span
                         *ngIf="item.type === 'costcenter'"
@@ -634,7 +671,7 @@
                             *ngFor="let alt of (item.alternativeCandidates || item.rawItem?.alternativeCandidates)"
                             type="button"
                             class="btn-switch-dest"
-                            (click)="quickSwitchDestination(item, alt); $event.stopPropagation()"
+                            (click)="onSwitchDestinationClick(item, alt, $event)"
                             title="Trocar para {{ alt.code }} - {{ alt.path }}"
                           >
                             <i class="fa-solid fa-arrow-right-arrow-left"></i> Trocar para: <strong>{{ alt.code }} - {{ alt.path }}</strong>
@@ -655,15 +692,58 @@
 
                   <td class="value-cell" style="text-align: right;">
                     <span class="value-display" [class.font-bold]="item.type === 'group' || item.type === 'subgroup'">
-                      {{ global.formatCurrency(item.value || 0) }}
+                      {{ global.formatCurrency(getItemSelectedValue(item)) }}
                     </span>
+                    <div class="original-val-hint text-muted" *ngIf="item.type === 'costcenter' && isCcPartiallySelected(item)">
+                      Total: {{ global.formatCurrency(item.value || 0) }}
+                    </div>
                   </td>
 
                   <td class="source-cell">
-                    <div *ngIf="item.type === 'costcenter' && ((item.sourceDescriptions && item.sourceDescriptions.length > 0) || (item.rawItem?.sourceDescriptions && item.rawItem.sourceDescriptions.length > 0))" class="source-tags">
-                      <span class="source-tag" *ngFor="let desc of (item.sourceDescriptions || item.rawItem?.sourceDescriptions)">
-                        <i class="fa-solid fa-quote-left"></i> {{ desc }}
-                      </span>
+                    <div *ngIf="item.type === 'costcenter' && (getNodeSourceLines(item).length > 0)" class="source-lines-wrapper">
+                      <div class="source-lines-toolbar" *ngIf="getNodeSourceLines(item).length > 1">
+                        <span class="source-lines-count-tag">
+                          {{ getNodeSourceLines(item).length }} itens da planilha
+                        </span>
+                        <button
+                          type="button"
+                          class="btn-split-lines"
+                          (click)="openMoveModalForLines(item, undefined, $event)"
+                          title="Escolher quais linhas mover deste Centro de Custo para outro destino"
+                        >
+                          <i class="fa-solid fa-arrows-split-up-and-left me-1"></i> Escolher linhas para mover
+                        </button>
+                      </div>
+
+                      <div class="source-tags">
+                        <div
+                          class="source-tag"
+                          *ngFor="let line of getNodeSourceLines(item)"
+                          [class.tag-unselected]="!isSourceLineSelected(line)"
+                          [title]="line.description"
+                        >
+                          <label class="tag-chk-wrap" (click)="$event.stopPropagation()">
+                            <input
+                              type="checkbox"
+                              [checked]="isSourceLineSelected(line)"
+                              (change)="toggleSourceLineSelection(item, line, $event)"
+                              title="Marcar / desmarcar esta linha para importação"
+                            />
+                          </label>
+                          <span class="tag-text">
+                            <i class="fa-solid fa-quote-left"></i>
+                            {{ line.formattedText || line.description }}
+                          </span>
+                          <button
+                            type="button"
+                            class="btn-tag-move"
+                            (click)="openMoveModalForLines(item, [line], $event)"
+                            title="Mover somente esta linha da planilha para outro destino"
+                          >
+                            <i class="fa-solid fa-arrows-up-down-left-right"></i>
+                          </button>
+                        </div>
+                      </div>
                     </div>
                     <span *ngIf="item.type !== 'costcenter'" class="text-muted" style="font-size: 12px;">
                       (Soma dos {{ item.children.length }} itens sob este nível)
@@ -674,7 +754,7 @@
                     <button
                       *ngIf="item.type === 'costcenter'"
                       class="btn-icon move-icon"
-                      (click)="openMoveModal(item, 'import')"
+                      (click)="openMoveModalForLines(item, undefined, $event)"
                       title="Mover este item para outro Grupo ou SubGrupo"
                     >
                       <i class="fa-solid fa-arrows-up-down-left-right"></i>
@@ -698,12 +778,35 @@
               <span><strong>{{ importResult.unmatchedRows.length }}</strong> linha(s) da planilha não coincidiram com nenhum Centro de Custo existente:</span>
             </div>
             <div class="unmatched-list">
-              <div class="unmatched-item" *ngFor="let un of importResult.unmatchedRows">
-                <span class="un-desc">"{{ un.description }}"</span>
-                <span class="un-val">{{ global.formatCurrency(un.value) }}</span>
-                <span class="un-sim text-muted" *ngIf="un.bestMatchName">
-                  Mais próximo: <em>{{ un.bestMatchName }}</em> (similaridade: {{ (un.similarity * 100).toFixed(0) }}%)
-                </span>
+              <div class="unmatched-item" *ngFor="let un of importResult.unmatchedRows; let i = index">
+                <div class="unmatched-item-main">
+                  <span class="un-desc" [title]="un.description">"{{ un.description }}"</span>
+                  <span class="un-val">{{ global.formatCurrency(un.value) }}</span>
+                  <span class="un-sim text-muted" *ngIf="un.bestMatchName">
+                    Mais próximo: <em>{{ un.bestMatchName }}</em> (similaridade: {{ (un.similarity * 100).toFixed(0) }}%)
+                  </span>
+                </div>
+                <div class="unmatched-item-actions">
+                  <button
+                    type="button"
+                    class="btn-quick-cc"
+                    *ngIf="getQuickMatchCc(un)"
+                    (click)="quickAssignCc(un, $event)"
+                    [title]="'Vincular diretamente ao Centro de Custo sugerido: ' + getQuickMatchCc(un)?.code + ' - ' + getQuickMatchCc(un)?.name"
+                  >
+                    <i class="fa-solid fa-wand-magic-sparkles"></i>
+                    <span>Vincular a {{ getQuickMatchCc(un)?.name }}</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="btn-choose-cc"
+                    (click)="openAssignCcModal(un, i)"
+                    title="Escolher e vincular a um Centro de Custo"
+                  >
+                    <i class="fa-solid fa-link"></i>
+                    <span>Escolher Centro de Custo</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -728,11 +831,11 @@
         <button
           class="btn btn-success"
           (click)="openConfirmImportModal()"
-          [disabled]="!importResult?.matchedCount || importResult.matchedCount === 0 || isConfirmingImport"
+          [disabled]="selectedCostCentersCount === 0 || isConfirmingImport"
           *ngIf="importResult"
         >
           <i class="fa-solid fa-check-double"></i>
-          Confirmar Importação ({{ importResult.matchedCount }} Centros)
+          Confirmar Importação ({{ selectedCostCentersCount }} Centros)
         </button>
       </div>
     </div>
@@ -756,11 +859,11 @@
         <div class="confirm-summary-box">
           <div class="summary-row">
             <span>Centros de Custo a atualizar:</span>
-            <strong>{{ importResult?.matchedCount }} itens</strong>
+            <strong>{{ selectedCostCentersCount }} de {{ totalImportCostCentersCount }} itens selecionados</strong>
           </div>
           <div class="summary-row">
             <span>Valor total a ser gravado:</span>
-            <strong class="text-success" style="font-size: 16px;">{{ global.formatCurrency(importResult?.totalMatchedValue || 0) }}</strong>
+            <strong class="text-success" style="font-size: 16px;">{{ global.formatCurrency(selectedImportTotalValue) }}</strong>
           </div>
         </div>
 
@@ -806,6 +909,35 @@
         <div class="move-item-banner">
           <span class="banner-pill cc-code">{{ itemToMove?.code }}</span>
           <strong class="banner-name">{{ itemToMove?.name }}</strong>
+        </div>
+
+        <div class="move-lines-section" *ngIf="moveContext === 'import' && itemToMove?.sourceLines && itemToMove!.sourceLines!.length > 0">
+          <div class="move-lines-header">
+            <span class="move-lines-title">
+              <i class="fa-solid fa-list-check"></i>
+              Linhas da Planilha a Transferir:
+            </span>
+            <div class="move-lines-actions">
+              <button type="button" class="btn-link-sm" (click)="toggleAllMoveLines($event)">
+                {{ isAllMoveLinesSelected ? 'Desmarcar Todas' : 'Marcar Todas' }}
+              </button>
+            </div>
+          </div>
+
+          <div class="move-lines-list">
+            <label class="move-line-item" *ngFor="let line of itemToMove!.sourceLines" [class.line-checked]="moveSelectedLineIds.has(line.id)">
+              <input type="checkbox"
+                     [checked]="moveSelectedLineIds.has(line.id)"
+                     (change)="toggleMoveLineSelection(line)" />
+              <span class="move-line-desc">{{ line.description }}</span>
+              <span class="move-line-val">{{ global.formatCurrency(line.value) }}</span>
+            </label>
+          </div>
+
+          <div class="move-lines-summary-tip">
+            Selecionadas: <strong>{{ selectedMoveLinesCount }}</strong> de <strong>{{ itemToMove!.sourceLines!.length }}</strong> linha(s)
+            &bull; Subtotal: <strong>{{ global.formatCurrency(selectedMoveLinesTotalValue) }}</strong>
+          </div>
         </div>
 
         <div class="move-form-grid">
@@ -867,9 +999,9 @@
 
       <div class="modal-footer">
         <button class="btn btn-outline" (click)="closeMoveModal()" [disabled]="isMoving">Cancelar</button>
-        <button class="btn btn-primary" (click)="executeMove()" [disabled]="!isMoveValid() || isMoving">
+        <button class="btn btn-primary" (click)="executeMove()" [disabled]="!isMoveValid() || isMoving || (moveContext === 'import' && selectedMoveLinesCount === 0)">
           <i class="fa-solid fa-spinner fa-spin" *ngIf="isMoving"></i>
-          {{ isMoving ? 'Transferindo...' : 'Confirmar Transferência' }}
+          {{ isMoving ? 'Transferindo...' : (moveContext === 'import' && itemToMove?.sourceLines && itemToMove!.sourceLines!.length > 1 ? 'Confirmar Transferência (' + selectedMoveLinesCount + ' linha' + (selectedMoveLinesCount > 1 ? 's' : '') + ')' : 'Confirmar Transferência') }}
         </button>
       </div>
     </div>
@@ -1097,6 +1229,125 @@
         <button class="btn btn-danger" (click)="executeDeleteHistory()" [disabled]="isDeletingHistory">
           <i class="fa-solid fa-spinner fa-spin me-1" *ngIf="isDeletingHistory"></i>
           {{ isDeletingHistory ? 'Excluindo e estornando...' : 'Excluir e Estornar' }}
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" *ngIf="isAssignCcModalOpen" (click)="closeAssignCcModal()">
+    <div class="modal-card assign-cc-modal-card" (click)="$event.stopPropagation()">
+      <div class="modal-header">
+        <h2 class="modal-title">
+          <i class="fa-solid fa-link" style="color: #f59e0b;"></i>
+          Vincular Linha ao Centro de Custo
+        </h2>
+        <button class="btn-close" (click)="closeAssignCcModal()">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <div class="assign-unmatched-banner">
+          <div class="assign-banner-row">
+            <span class="assign-banner-label">Descrição na Planilha:</span>
+            <strong class="assign-banner-desc">"{{ selectedUnmatchedRow?.description }}"</strong>
+          </div>
+          <div class="assign-banner-row">
+            <span class="assign-banner-label">Valor:</span>
+            <span class="assign-banner-val">{{ global.formatCurrency(selectedUnmatchedRow?.value || 0) }}</span>
+            <span class="assign-banner-sim text-muted" *ngIf="selectedUnmatchedRow?.bestMatchName">
+              (Mais próximo identificado: <em>{{ selectedUnmatchedRow.bestMatchName }}</em>)
+            </span>
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-top: 16px;">
+          <label class="form-label">
+            Pesquisar Centro de Custo
+          </label>
+          <div class="search-input-wrap">
+            <i class="fa-solid fa-magnifying-glass"></i>
+            <input
+              type="text"
+              class="form-control"
+              placeholder="Digite o código ou nome do Centro de Custo..."
+              [(ngModel)]="assignCcSearchQuery"
+            />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">
+            Selecione o Centro de Custo de Destino *
+          </label>
+          <div class="assign-cc-list-container">
+            <div
+              class="assign-cc-option"
+              *ngFor="let cc of filteredAssignCostCenters"
+              [class.selected]="assignTargetCostCenterId === cc.id"
+              (click)="assignTargetCostCenterId = cc.id"
+            >
+              <div class="assign-cc-radio">
+                <input
+                  type="radio"
+                  name="assignCcOption"
+                  [value]="cc.id"
+                  [(ngModel)]="assignTargetCostCenterId"
+                />
+              </div>
+              <div class="assign-cc-info">
+                <div class="assign-cc-title">
+                  <span class="badge badge-code">{{ cc.code }}</span>
+                  <strong class="assign-cc-name">{{ cc.name }}</strong>
+                </div>
+                <div class="assign-cc-hierarchy text-muted">
+                  <i class="fa-solid fa-sitemap me-1 text-primary"></i>
+                  {{ getCostCenterHierarchyPath(cc) }}
+                </div>
+              </div>
+            </div>
+
+            <div *ngIf="filteredAssignCostCenters.length === 0" class="text-center py-4 text-muted">
+              <i class="fa-solid fa-folder-open mb-2" style="font-size: 24px; opacity: 0.5;"></i>
+              <p>Nenhum Centro de Custo encontrado com o termo pesquisado.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="assign-selection-preview" *ngIf="selectedTargetCostCenter">
+          <div class="selection-preview-header">
+            <i class="fa-solid fa-circle-check text-success"></i>
+            <span>Centro de Custo Selecionado:</span>
+          </div>
+          <div class="selection-preview-body">
+            <span class="badge badge-code">{{ selectedTargetCostCenter.code }}</span>
+            <strong class="text-white">{{ selectedTargetCostCenter.name }}</strong>
+            <span class="preview-path text-muted">({{ getCostCenterHierarchyPath(selectedTargetCostCenter) }})</span>
+          </div>
+        </div>
+
+        <div class="form-group mt-3" *ngIf="selectedUnmatchedSameDescCount > 1">
+          <label class="form-checkbox">
+            <input type="checkbox" [(ngModel)]="assignApplyToSameDescription" />
+            <span>
+              Aplicar este Centro de Custo a todas as <strong>{{ selectedUnmatchedSameDescCount }}</strong> linhas da planilha com a mesma descrição
+              ("<em>{{ selectedUnmatchedRow?.description }}</em>")
+            </span>
+          </label>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-outline" (click)="closeAssignCcModal()">
+          Cancelar
+        </button>
+        <button
+          class="btn btn-primary"
+          [disabled]="!assignTargetCostCenterId"
+          (click)="confirmAssignCc()"
+        >
+          <i class="fa-solid fa-check me-1"></i>
+          Confirmar Vínculo
         </button>
       </div>
     </div>
