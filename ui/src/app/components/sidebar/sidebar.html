@@ -15,10 +15,6 @@
       <i class="fa-solid fa-sitemap nav-icon"></i>
       <span>Centros de Custo</span>
     </a>
-    <a routerLink="/users" routerLinkActive="active" class="nav-item">
-      <i class="fa-solid fa-users nav-icon"></i>
-      <span>Usuários</span>
-    </a>
     <button (click)="themeService.toggleTheme()" class="nav-item" style="background: none; border: none; width: 100%; cursor: pointer; text-align: left; display: flex; align-items: center; gap: 10px; color: var(--text-sidebar-muted);">
       <i class="fa-solid nav-icon" [ngClass]="themeService.isDark() ? 'fa-sun' : 'fa-moon'" style="font-size: 14px; width: 16px; text-align: center;"></i>
       <span>{{ themeService.isDark() ? 'Modo Claro' : 'Modo Escuro' }}</span>
