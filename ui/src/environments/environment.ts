@@ -1,4 +1,4 @@
 export const environment = {
   production: true,
-  apiUrl: 'https://api.sistemafazenda.com'
+  apiUrl: 'https://sistema-fazenda-xjyg.onrender.com'
 };
