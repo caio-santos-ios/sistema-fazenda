@@ -1,0 +1,107 @@
+<div class="page-container">
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Sistema Fazenda - Visão Geral</h1>
+      <p class="page-subtitle">Acompanhamento dos centros de custo, estruturas de custeio e contas de usuário</p>
+    </div>
+    <div class="header-actions">
+      <a routerLink="/cost-centers" class="btn btn-primary">
+        <i class="fa-solid fa-sitemap"></i>
+        <span>Gerenciar Centros de Custo</span>
+      </a>
+    </div>
+  </div>
+
+  <app-loading *ngIf="isLoading" [isLoading]="isLoading"></app-loading>
+
+  <div class="kpi-grid" *ngIf="!isLoading">
+    <div class="kpi-card gold-border">
+      <div class="kpi-icon-wrap blue-icon">
+        <i class="fa-solid fa-folder"></i>
+      </div>
+      <div class="kpi-data">
+        <span class="kpi-label">Grupos</span>
+        <h3 class="kpi-value">{{ stats.totalGroups }}</h3>
+        <span class="kpi-subtext">Nível 1 (Principal)</span>
+      </div>
+    </div>
+
+    <div class="kpi-card">
+      <div class="kpi-icon-wrap amber-icon">
+        <i class="fa-solid fa-folder-tree"></i>
+      </div>
+      <div class="kpi-data">
+        <span class="kpi-label">SubGrupos</span>
+        <h3 class="kpi-value">{{ stats.totalSubGroups }}</h3>
+        <span class="kpi-subtext">Nível 2 (Sub-estruturas)</span>
+      </div>
+    </div>
+
+    <div class="kpi-card">
+      <div class="kpi-icon-wrap purple-icon">
+        <i class="fa-solid fa-tags"></i>
+      </div>
+      <div class="kpi-data">
+        <span class="kpi-label">SubCentros</span>
+        <h3 class="kpi-value">{{ stats.totalSubCostCenters }}</h3>
+        <span class="kpi-subtext">Nível 3 (Opcional)</span>
+      </div>
+    </div>
+
+    <div class="kpi-card green-border">
+      <div class="kpi-icon-wrap green-icon">
+        <i class="fa-solid fa-coins"></i>
+      </div>
+      <div class="kpi-data">
+        <span class="kpi-label">Centros de Custo</span>
+        <h3 class="kpi-value">{{ stats.totalCostCenters }}</h3>
+        <span class="kpi-subtext">Lançamentos finais</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="dashboard-grid" *ngIf="!isLoading">
+    <div class="card chart-card">
+      <div class="card-header">
+        <h3 class="card-title">Distribuição da Estrutura de Custos</h3>
+      </div>
+      <div class="card-body chart-body">
+        <canvas #distributionChart></canvas>
+      </div>
+    </div>
+
+    <div class="card recent-card">
+      <div class="card-header">
+        <h3 class="card-title">Centros de Custo Recentes</h3>
+        <a routerLink="/cost-centers" class="view-all-link">Ver todos</a>
+      </div>
+      <div class="card-body">
+        <div class="table-responsive">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th>Nome</th>
+                <th>Hierarquia</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let cc of recentCostCenters">
+                <td><strong style="font-family: monospace;">{{ cc.code }}</strong></td>
+                <td>{{ cc.name }}</td>
+                <td>
+                  <span class="badge">{{ cc.groupCode }} &gt; {{ cc.subGroupCode }}</span>
+                </td>
+              </tr>
+              <tr *ngIf="recentCostCenters.length === 0">
+                <td colspan="3" class="text-center text-muted" style="padding: 24px;">
+                  Nenhum centro de custo cadastrado ainda.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

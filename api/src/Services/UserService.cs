@@ -1,0 +1,158 @@
+using api_bora_trampar.src.Interfaces;
+using api_bora_trampar.src.Models;
+using api_bora_trampar.src.Models.Base;
+using api_bora_trampar.src.Requests.Base;
+using api_bora_trampar.src.Requests;
+using MongoDB.Bson;
+
+namespace api_bora_trampar.src.Services
+{
+    public class UserService(IUserRepository repository) : IUserService
+    {
+        #region READ
+        public async Task<ResponseApi<List<dynamic>>> GetAllAsync()
+        {
+            try
+            {
+                List<BsonDocument> pipeline =
+                [
+                    new("$match", new BsonDocument
+                    {
+                        {"deleted", false},
+                    }),
+                    new("$project", new BsonDocument
+                    {
+                        {"_id", 0},
+                        {"id", new BsonDocument("$toString", "$_id")},
+                        {"name", 1},
+                        {"email", 1},
+                        {"whatsapp", 1},
+                        {"document", new BsonDocument("$ifNull", new BsonArray { "$document", "" })},
+                        {"role", 1},
+                        {"photo", new BsonDocument("$ifNull", new BsonArray { "$photo", "" })},
+                        {"blocked", new BsonDocument("$ifNull", new BsonArray { "$blocked", false })},
+                        {"isBlocked", new BsonDocument("$ifNull", new BsonArray { "$blocked", false })},
+                        {"active", new BsonDocument("$ne", new BsonArray { "$blocked", true })},
+                        {"walletBalance", new BsonDocument("$ifNull", new BsonArray { "$wallet_balance", 0m })},
+                        {"wallet_balance", new BsonDocument("$ifNull", new BsonArray { "$wallet_balance", 0m })},
+                        {"createdAt", 1}
+                    }),
+                    new("$sort", new BsonDocument { { "createdAt", -1 } } )
+                ];
+
+                List<dynamic> users = await repository.GetAllAsync(pipeline);
+
+                return new(users, 200, "Usuários listados com sucesso");
+            }
+            catch (Exception ex)
+            {
+                return new(null, 500, $"Ocorreu um erro inesperado. Por favor, tente novamente mais tarde - {ex.Message}");
+            }
+        }
+        public async Task<ResponseApi<User?>> GetByIdAsync(string id)
+        {
+            try
+            {
+                User? user = await repository.GetByIdAsync(id);
+                if (user is null) return new(null, 404, "Usuário não encontrado");
+
+                return new(user, 200, "Usuário buscado com sucesso");
+            }
+            catch (Exception ex)
+            {
+                return new(null, 500, $"Ocorreu um erro inesperado. Por favor, tente novamente mais tarde - {ex.Message}");
+            }
+        }
+        #endregion
+        #region CREATE
+        #endregion
+        #region UPDATE
+        public async Task<ResponseApi<User?>> UpdateAsync(UpdateUserRequest request)
+        {
+            try
+            {
+                User? existedUser = await repository.GetByIdAsync(request.Id);
+                if (existedUser is null) return new(null, 404, "Usuário não encontrado");
+
+                if (!string.IsNullOrWhiteSpace(request.Name)) existedUser.Name = request.Name;
+                if (!string.IsNullOrWhiteSpace(request.Email)) existedUser.Email = request.Email;
+                if (!string.IsNullOrWhiteSpace(request.WhatsApp)) existedUser.WhatsApp = request.WhatsApp;
+                if (request.Photo != null) existedUser.Photo = request.Photo;
+                if (request.Blocked.HasValue) existedUser.Blocked = request.Blocked.Value;
+
+                existedUser.UpdatedAt = DateTime.Now;
+                existedUser.UpdatedBy = request.UpdatedBy;
+
+                User? user = await repository.UpdateAsync(existedUser);
+                if (user is null) return new(null, 400, "Falha ao atualizar usuário");
+
+                return new(user, 200, "Usuário atualizado com sucesso");
+            }
+            catch (Exception ex)
+            {
+                return new(null, 500, $"Ocorreu um erro inesperado. Por favor, tente novamente mais tarde - {ex.Message}");
+            }
+        }
+        #endregion
+        #region DELETE
+        public async Task<ResponseApi<User?>> DeleteAsync(DeleteRequest request)
+        {
+            try
+            {
+                User? existedUser = await repository.GetByIdAsync(request.Id);
+                if (existedUser is null) return new(null, 404, "Usuário não encontrado");
+
+                existedUser.Deleted = true;
+                existedUser.DeletedAt = DateTime.Now;
+
+                User user = await repository.DeleteAsync(existedUser);
+                if (user is null) return new(null, 400, "Falha ao excluir usuário");
+
+                return new(user, 204, "Usuário excluido com sucesso");
+            }
+            catch (Exception ex)
+            {
+                return new(null, 500, $"Ocorreu um erro inesperado. Por favor, tente novamente mais tarde - {ex.Message}");
+            }
+        }
+        #endregion
+
+        public async Task<ResponseApi<decimal>> UpdateWalletBalanceAsync(string userId, decimal amountDelta)
+        {
+            try
+            {
+                User? user = await repository.GetByIdAsync(userId);
+                if (user is null) return new(0, 404, "Usuário não encontrado");
+
+                user.WalletBalance = Math.Max(0, user.WalletBalance + amountDelta);
+                user.UpdatedAt = DateTime.UtcNow;
+
+                await repository.UpdateAsync(user);
+                return new(user.WalletBalance, 200, "Saldo atualizado com sucesso");
+            }
+            catch (Exception ex)
+            {
+                return new(0, 500, $"Erro ao atualizar saldo: {ex.Message}");
+            }
+        }
+
+        public async Task<ResponseApi<User?>> UpdateTokenFcmAsync(string userId, string tokenFcm)
+        {
+            try
+            {
+                User? user = await repository.GetByIdAsync(userId);
+                if (user is null) return new(null, 404, "Usuário não encontrado");
+
+                user.TokenFCM = tokenFcm;
+                user.UpdatedAt = DateTime.UtcNow;
+
+                await repository.UpdateAsync(user);
+                return new(user, 200, "Token FCM atualizado com sucesso");
+            }
+            catch (Exception ex)
+            {
+                return new(null, 500, $"Erro ao atualizar token FCM: {ex.Message}");
+            }
+        }
+    }
+}
